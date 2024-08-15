@@ -1,0 +1,54 @@
+import os
+import json
+import pandas as pd
+
+# Preprocess Wikipedia data
+wiki_data = {}
+directory = "./wiki-pages/"
+for filename in os.listdir(directory):
+    if filename.endswith(".jsonl"):
+        file_path = os.path.join(directory, filename)
+        with open(file_path, 'r') as file:
+            for line in file:
+                json_data = json.loads(line)
+                wiki_data[json_data['id']] = json_data['lines']
+
+# Process train data
+train_data = []
+i=0
+with open('shared_task_dev.jsonl', 'r') as file:
+    for line in file:
+        json_data = json.loads(line)
+        claim = json_data.get("claim", "")
+        evidence = json_data.get("evidence", "")
+        document_names = [(e[2], e[3]) for ev in evidence for e in ev if len(e) > 0]
+        target = json_data.get("label", "")
+        train_data.append([claim, document_names, target])
+        i+=1
+        if i==100:
+            break
+
+final_train_data = []
+for claim, evidence, target in train_data:
+        
+    sentences = []
+    if target!="NOT ENOUGH INFO":
+        for doc_id, sentence_number in evidence:
+            if doc_id in wiki_data:
+                lines = wiki_data[doc_id].split('\n')
+                for line in lines:
+                    split_array = line.split('\t')
+                    if split_array[0] == sentence_number or split_array[0] == str(sentence_number):
+                        final = line.replace('\t', ' ')
+                        sentences.append(final[2:])
+                        break
+    cl=''
+    for sen in sentences:
+        cl=' [SEP] ' + sen
+    cl='[CLS]'+claim+cl
+    final_train_data.append([cl, target])
+
+# Save final train data
+df = pd.DataFrame(final_train_data, columns=['claim','target'])
+df.to_csv('final_dev_data1.csv', index=False)
+print("Final train data saved to final_train_data.csv")

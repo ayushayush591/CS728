@@ -1,0 +1,79 @@
+import os
+import json
+import pandas as pd
+import nltk
+from nltk.tokenize import word_tokenize
+from nltk import pos_tag, ne_chunk
+from multiprocessing import Pool
+
+# Download necessary NLTK resources
+nltk.download('punkt')
+nltk.download('averaged_perceptron_tagger')
+nltk.download('maxent_ne_chunker')
+nltk.download('words')
+
+# Function to extract named entities
+def extract_named_entities(named_entities):
+    entities = []
+    for subtree in named_entities:
+        if hasattr(subtree, 'label') and subtree.label():
+            if subtree.label() in ['ORGANIZATION', 'PERSON', 'GPE', 'LOCATION']:
+                entities.append(' '.join([child[0] for child in subtree]))
+            else:
+                entities.extend(extract_named_entities(subtree))
+    return entities
+
+# Function to perform Named Entity Recognition (NER)
+def ner(text):
+    words = word_tokenize(text)
+    tagged_words = pos_tag(words)
+    named_entities = ne_chunk(tagged_words)
+    return named_entities
+
+# Function to process a line of JSON data
+def process_line(line):
+    json_data = json.loads(line)
+    claim = json_data.get("claim", "")
+    named_entities = ner(claim)
+    entity_list = extract_named_entities(named_entities)
+    return (claim, entity_list)
+
+# Function to process a file chunk
+def process_file_chunk(chunk):
+    filename, instances = chunk
+    file_path = os.path.join("./wiki-pages/", filename)
+    matching_ids = []
+    
+    with open(file_path, 'r') as file:
+        for line in file:
+            json_data = json.loads(line)
+            text = json_data.get("text", "")
+            ids = json_data.get("id", "")
+            if all(entity in text for entity in instances):
+                matching_ids.append(ids)
+                if len(matching_ids) >= 2:
+                    return matching_ids  # Early stopping condition
+    return matching_ids
+
+if __name__ == '__main__':
+    train_data = []
+    with open('test.jsonl', 'r') as file:
+        with Pool() as p:
+            train_data = p.map(process_line, file)
+
+    data_list = []
+    with Pool() as p:
+        for i, instances in enumerate(train_data):
+            if i % 100 == 0:
+                print(f"Processed {i} instances.")
+            instances_to_process = [(filename, instances[1]) for filename in os.listdir("./wiki-pages/") if filename.endswith(".jsonl")]
+            results = p.map(process_file_chunk, instances_to_process)
+            data_list.append((instances[0], results[0] if len(results) > 0 else []))  # Fixed index to access the result
+
+    # Create DataFrame
+    df = pd.DataFrame(data_list, columns=['Claim', 'Matching IDs'])
+
+    # Save DataFrame to CSV
+    df.to_csv('data_list1.csv', index=False)
+
+    print("CSV file saved successfully.")
